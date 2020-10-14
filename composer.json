@@ -9,7 +9,7 @@
         "enqueue/amqp-bunny": "^0.10.4",
         "guzzlehttp/guzzle": "^7.2",
         "tightenco/collect": "^8.0",
-        "qssdk/oalog": "^1.0"
+        "qssdk/log": "^0.1"
     },
     "authors" : [{
             "name" : "Simon Quan",
