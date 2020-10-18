@@ -18,7 +18,7 @@ class RabbitMQClient
     
     public function __construct()
     {
-        $this->config = require '../config/rabbitmq.php';
+        $this->config = require dirname(__DIR__) . '/config/rabbitmq.php';
         $this->context = $this->createContext($this->config);
     }
     
@@ -89,14 +89,14 @@ class RabbitMQClient
     /**
      * json msg
      * @param string $message
-     * @param \Interop\Amqp\Impl\AmqpQueue $fooQueue
+     * @param \Interop\Amqp\Impl\AmqpQueue | \Interop\Amqp\Impl\AmqpTopic $destination
      */
-    public function produce(string $message, $fooQueue, array $properties = [], array $headers = [])
+    public function produce(string $message, $destination, array $properties = [], array $headers = [])
     {
         $headers = array_merge($headers, ['delivery-mode'=>2]);
         $message = $this->context->createMessage($message, $properties, $headers);
         
-        $this->context->createProducer()->send($fooQueue, $message);
+        $this->context->createProducer()->send($destination, $message);
     }
     
     /**
@@ -115,16 +115,17 @@ class RabbitMQClient
     /**
      * 
      * @param string $message
-     * @param \Interop\Amqp\Impl\AmqpQueue $fooQueue 延时队列
-     * @param int $delay 延时时间，毫秒
+     * @param \Interop\Amqp\Impl\AmqpQueue | \Interop\Amqp\Impl\AmqpTopic $destination 延时队列
+     * @param int $delay 延时时间，milliseconds 毫秒
      */
-    public function produceDelayed(string $message, $fooQueue, $delay)
+    public function produceDelayed(string $message, $destination, $delay, array $properties = [], array $headers = [])
     {
-        $message = $this->context->createMessage($message);
+        $headers = array_merge($headers, ['delivery-mode'=>2]);
+        $message = $this->context->createMessage($message, $properties, $headers);
         
         $this->context->createProducer()
         ->setDelayStrategy(new RabbitMqDlxDelayStrategy())
-        ->setDeliveryDelay($delay)->send($fooQueue, $message);
+        ->setDeliveryDelay($delay)->send($destination, $message);
     }
     
     /**

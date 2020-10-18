@@ -46,7 +46,7 @@ class QueueService
      * @param string $handleClass
      * @param string $handleMethod
      * @param int $maxTry
-     * @param int $delay second
+     * @param int $delay milliseconds 毫秒
      * @return string message_id 失败返回空字符串
      */
     public function produce(string $queueName, array $message, string $handleClass = '', string $handleMethod = '', int $maxTry = 5, int $delay  = 0): string
@@ -99,47 +99,83 @@ class QueueService
         $thisObj = $this;
         foreach ($queues as $queue) {
             $tmpConsumer = $context->createConsumer($queue);
-            $subscriptionConsumer->subscribe($tmpConsumer, function (Message $message, Consumer $consumer) use ($handler, $thisObj) {
+            $subscriptionConsumer->subscribe($tmpConsumer, function (Message $message, Consumer $consumer) use ($handler, $thisObj, $queue) {
                 // process message
                 // TODO
                 try {
+                    
                     $headers = $message->getHeaders();
                     $msg_id = $headers['x-msg-id'];
                     $properties = $message->getProperties();
-                    $body = $message->getBody();
-                    $x_max_retry = $message->getProperty('consume_x_max_retry', 1);
-                    $consume_x_max_retry = $message->getProperty('x_max_retry', 2);
+                    $x_max_retry = $message->getProperty('x_max_retry', 2);
+                    $queueName = $queue->getQueueName();
+                    $handle_class = $properties['handle_class'] ?? '';
+                    $handle_method = $properties['handle_method'] ?? '';
+                    $delay = $headers['x-delay'] ?? 0;
+                        
+                    try {
+                        $body = $message->getBody();
+                        $body = json_decode($body, true);
+                    } catch (\Exception $e) {
+                        $consume_x_max_retry = 1;
+                        $consumer->acknowledge($message);
+                        
+                        // 消息体不是数组，直接进入 6,最终消费失败
+                        $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
+                        return true;
+                    }
+                    
+                    try {
+                        $redisKey = 'message_consume_retry_' . $msg_id;
+                        if ($thisObj->redis->exists($redisKey)) {
+                            $consume_x_max_retry = $thisObj->redis->get($redisKey);
+                        } else {
+                            $consume_x_max_retry = 0;
+                        }
+                    
+                    } catch (\Exception $e) {
+                        $consume_x_max_retry = ($consume_x_max_retry ?? 0) + 1;
+                        $thisObj->redis->set($redisKey, $consume_x_max_retry);
+                        
+                        // consume Redis 异常 5,消费失败重试
+                        $thisObj->consumeLog($queueName, $msg_id, $body, 5, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
+                        return true;
+                    }
+                    
+                    
                     if ($consume_x_max_retry >= $x_max_retry) {
                         $consumer->acknowledge($message);
                         
-                        // consume fail 5,消费失败
-                        $thisObj->consumeLog($msg_id, 5, $x_max_retry);
+                        // consume fail 6,最终消费失败
+                        $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
+                        return true;
                     }
                     
-                    // consume start 3,进入消费
-                    $thisObj->consumeLog($msg_id, 3, $x_max_retry);
+                    // consume start 进入消费 3,出队成功
+                    $thisObj->consumeLog($queueName, $msg_id, $body, 3, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                     
                     if (!empty($handler)) {
                         $class = new $handler['handle_class']($body);
                         $class->{$handler['handler_method']}();
                         $consumer->acknowledge($message);
                         // consume success 4 消费成功
-                        $thisObj->consumeLog($msg_id, 4, $x_max_retry);
+                        $thisObj->consumeLog($queueName, $msg_id, $body, 4, $x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                     } else if (isset($properties['handle_class']) && !empty($properties['handle_class'])) {
                         $class = new $properties['handle_class']($body);
                         $class->{$handler['handler_method']}();
                         $consumer->acknowledge($message);
                         // consume success 4 消费成功
-                        $thisObj->consumeLog($msg_id, 4, $x_max_retry);
+                        $thisObj->consumeLog($queueName, $msg_id, $body, 4, $x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                     } else {
-                        $x_max_retry = $message->getProperty('consume_x_max_retry', 1) + 1;
-                        $message->setProperty('x_max_retry', $x_max_retry);
-                        // consume 5,消费失败
-                        $thisObj->consumeLog($msg_id, 5, $x_max_retry);
+                        $consume_x_max_retry += 1;
+                        $thisObj->redis->set($redisKey, $consume_x_max_retry);
+                        
+                        // consume 5,消费失败重试
+                        $thisObj->consumeLog($queueName, $msg_id, $body, 5, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                     }
                 } catch (\Exception $e) {
-                    // consume start 5,消费失败
-                    $thisObj->consumeLog($msg_id, 5, $x_max_retry);
+                    // consume 5,消费失败重试
+                    $thisObj->consumeLog($queueName, $msg_id, $body, 5, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                 }
                 return true;
             });
@@ -148,6 +184,23 @@ class QueueService
         // 0 无限消费， 直到发生错误
         // 单位毫秒
         $subscriptionConsumer->consume(0); // 2 sec
+    }
+    
+    private function formatConsumeLog($queueName, $message, $delay, $maxTry, $handleClass, $handleMethod, $status)
+    {
+        $params = [
+            'queue_name' => $queueName,
+            'message' => $message,
+            'delay' => $delay,
+            'max_retry_times' => $maxTry,
+            'handler_class' => $handleClass,
+            'handler_method' => $handleMethod,
+            'status' => $status,
+        ];
+        
+        $params = array_merge($params, $this->getPublicRequestParams());
+        
+        return $params;
     }
     
     public function cancelConsume()
@@ -165,15 +218,23 @@ class QueueService
         
     }
     
-    public function consumeLog(string $messageId, int $status, int $tryTime)
+    public function consumeLog(string $queueName, string $messageId, array $message, int $status, int $tryTime, $delay, $maxTry, $handleClass = '', $handleMethod = '')
     {
         $url = $this->logApi . self::LOG_API_URI;
         
         $params = [
-            'message_id' => $messageId,
+            'queue_name' => $queueName,
+            'message' => $message,
+            'delay' => $delay,
+            'max_retry_times' => $maxTry,
+            'handler_class' => $handleClass,
+            'handler_method' => $handleMethod,
             'status' => $status,
-            'try_time' => $tryTime,
+            'message_id' => $messageId,
+            'retry_times' => $tryTime,
         ];
+        
+        $params = array_merge($params, $this->getPublicRequestParams());
         
         try {
             Http::timeout(3)->post($url, ['params' => $params]);
@@ -214,7 +275,14 @@ class QueueService
     {
         $url = $this->logErrorApi . self::LOG_API_ERROR_URI;
         try {
-            Http::timeout(3)->post($url, ['params' => $params, 'error_msg' => $errorMsg]);
+            
+            $data = [
+                'params' => $params,
+                'error_msg' => $errorMsg
+            ];
+            $data = array_merge($data, $this->getPublicRequestParams());
+            
+            Http::timeout(3)->post($url, $data);
         } catch (\Exception $e) {
             Oalog::log('通信故障或超时 - ' . $fromFunction, ['msg' => $e->getMessage(), 'url' => $url, 'params' => $params, 'error_msg' => $errorMsg]);
         }
