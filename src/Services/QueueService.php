@@ -185,6 +185,8 @@ class QueueService
                     }
                 } catch (\Exception $e) {
                     // consume 5,消费失败重试
+                    $consume_x_max_retry += 1;
+                    $thisObj->redis->set($redisKey, $consume_x_max_retry);
                     $consumer->reject($message, true);
                     $thisObj->consumeLog($queueName, $msg_id, $body, 5, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                 }
