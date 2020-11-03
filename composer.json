@@ -1,19 +1,19 @@
 {
-    "name" : "ssdk/rabbitmq",
+    "name" : "qssdk/rabbitmq",
     "description" : "RabbitMq SDK Based on Bunny Lib",
     "keywords": ["RabbitMq"],
     "type" : "library",
     "license" : "MIT",
     "require": {
-         "php": "^7.2.0",
+        "php": "^7.2.0",
         "enqueue/amqp-bunny": "^0.10.4",
         "guzzlehttp/guzzle": "^7.2",
         "tightenco/collect": "^8.0",
-        "ssdk/oalog": "^1.0"
+        "qssdk/log": "^1.0"
     },
     "authors" : [{
-            "name" : "quanqm",
-            "email" : "quanqm@2345.com"
+            "name" : "Simon Quan",
+            "email" : "qqmmmqq@gmail.com"
         }
     ],
     "minimum-stability" : "stable",
@@ -21,12 +21,6 @@
         "psr-4": {
             "Ssdk\\Rabbitmq\\": "src/",
             "Ssdk\\Rabbittest\\": "test/"
-        }
-    },
-     "repositories": {
-        "0": {
-            "type": "composer",
-            "url": "http://packagist.2345.com/repo/private/"
         }
     }
 }
