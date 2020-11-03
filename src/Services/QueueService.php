@@ -24,6 +24,7 @@ class QueueService
     protected $logApi;
     protected $logErrorApi;
     protected $redis;
+    public $produceError = '';
     
     /**
      * 
@@ -67,21 +68,32 @@ class QueueService
         try {
             $response = Http::timeout($this->config['timeout'])->post($url, $params);
         } catch (\Exception $e) {
+            $this->produceError = $e->getMessage();
             try {
                 $response = Http::timeout($this->config['timeout'])->post($url, $params);
             } catch (\Exception $e) {
+                $this->produceError = $e->getMessage();
                 $this->sendErrorLog($params, $e->getMessage(), 'produce');
                 return '';
             }
+        } catch (\Error $e) {
+            $this->produceError = $e->getMessage();
+            Oalog::log('通信故障或超时 - prodce', ['msg' => $e->getMessage(), 'url' => $url, 'params' => $params, 'error_trace' => $e->getTraceAsString()]);
+            return '';
         }
         
         if ($response->isOk()) {
             $arr = $response->json();
             if ($arr['code'] == 0) {
                 return $arr['data']['message_id'] ?? '';
+            } else {
+                $this->produceError = $arr['msg'];
+                Oalog::log($arr['msg'], ['msg' => '队列生产服务', 'url' => $url, 'params' => $params]);
+                return '';
             }
         }
         
+        Oalog::log('通信故障或超时 - prodce', ['msg' => '队列生产服务不健康', 'url' => $url, 'params' => $params]);
         return '';
     }
     
@@ -107,7 +119,10 @@ class QueueService
                         $msg_id = $headers['x-msg-id'];
                         $properties = $message->getProperties();
                         $x_max_retry = $message->getProperty('x_max_retry', 2);
-                    } catch (\Exception $e) {
+                        if (isset($handler['max_try'])) {
+                            $x_max_retry = $handler['max_try'];
+                        }
+                    } catch (\Throwable $e) {
                         $consumer->acknowledge($message);
                         
                         $this->sendErrorLog([
@@ -128,7 +143,7 @@ class QueueService
                     try {
                         $body = $message->getBody();
                         $body = json_decode($body, true);
-                    } catch (\Exception $e) {
+                    } catch (\Throwable $e) {
                         $consume_x_max_retry = 1;
                         $consumer->acknowledge($message);
                         // 消息体不是数组，直接进入 6,最终消费失败
@@ -144,7 +159,7 @@ class QueueService
                             $consume_x_max_retry = 0;
                         }
                     
-                    } catch (\Exception $e) {
+                    } catch (\Throwable $e) {
                         $consume_x_max_retry = ($consume_x_max_retry ?? 0) + 1;
                         $thisObj->redis->set($redisKey, $consume_x_max_retry);
                         // consume Redis 异常 5,消费失败重试
@@ -189,6 +204,10 @@ class QueueService
                     $thisObj->redis->set($redisKey, $consume_x_max_retry);
                     $consumer->reject($message, true);
                     $thisObj->consumeLog($queueName, $msg_id, $body, 5, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
+                } catch (\Error $e) {
+                    $consumer->acknowledge($message);
+                    // consume fail 6,最终消费失败
+                    $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                 }
                 return true;
             });
@@ -251,7 +270,7 @@ class QueueService
         
         try {
             Http::timeout(5)->post($url, $params);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->sendErrorLog($params, $e->getMessage(), 'consumeLog');
         }
     }
@@ -296,7 +315,7 @@ class QueueService
             $data = array_merge($data, $this->getPublicRequestParams());
             
             Http::timeout(5)->post($url, $data);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Oalog::log('通信故障或超时 - ' . $fromFunction, ['msg' => $e->getMessage(), 'url' => $url, 'params' => $params, 'error_msg' => $errorMsg]);
         }
     }
