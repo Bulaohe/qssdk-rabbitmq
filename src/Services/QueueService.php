@@ -186,6 +186,7 @@ class QueueService
                         
                         if ($consume_x_max_retry >= $x_max_retry) {
                             $consumer->acknowledge($message);
+                            $thisObj->redis->del($redisKey);
                             // consume fail 6,最终消费失败
                             $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                             return true;
