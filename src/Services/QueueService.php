@@ -7,6 +7,7 @@ use Ssdk\Oalog\Facades\Oalog;
 use Ssdk\Rabbitmq\Clients\RabbitMQClient;
 use Interop\Queue\Consumer;
 use Interop\Queue\Message;
+use Ssdk\Oalog\Logger;
 
 class QueueService
 {
@@ -74,11 +75,12 @@ class QueueService
             } catch (\Exception $e) {
                 $this->produceError = $e->getMessage();
                 $this->sendErrorLog($params, $e->getMessage(), 'produce');
+                Oalog::log('消息总线通信故障或超时 - prodce', ['msg' => $e->getMessage(), 'url' => $url, 'params' => $params, 'error_trace' => $e->getTraceAsString()], Logger::ERROR);
                 return '';
             }
         } catch (\Error $e) {
             $this->produceError = $e->getMessage();
-            Oalog::log('通信故障或超时 - prodce', ['msg' => $e->getMessage(), 'url' => $url, 'params' => $params, 'error_trace' => $e->getTraceAsString()]);
+            Oalog::log('消息总线通信故障或超时 - prodce', ['msg' => $e->getMessage(), 'url' => $url, 'params' => $params, 'error_trace' => $e->getTraceAsString()], Logger::ERROR);
             return '';
         }
         
@@ -88,12 +90,12 @@ class QueueService
                 return $arr['data']['message_id'] ?? '';
             } else {
                 $this->produceError = $arr['msg'];
-                Oalog::log($arr['msg'], ['msg' => '队列生产服务', 'url' => $url, 'params' => $params]);
+                Oalog::log($arr['msg'], ['msg' => '消息总线队列生产服务', 'url' => $url, 'params' => $params]);
                 return '';
             }
         }
         
-        Oalog::log('通信故障或超时 - prodce', ['msg' => '队列生产服务不健康', 'url' => $url, 'params' => $params]);
+        Oalog::log('消息总线通信故障或超时 - prodce', ['msg' => '队列生产服务不健康', 'url' => $url, 'params' => $params], Logger::ERROR);
         return '';
     }
     
@@ -132,6 +134,15 @@ class QueueService
                                 'handler' => $handler,
                                 'msg' => 'msg_id error',
                             ], $e->getMessage(), 'consume');
+                            
+                            // error 级别发送到预警
+                            $this->logError('消费，获取消息ID错误' . $e->getMessage(), [
+                                'headers' => $headers,
+                                'properties' => $properties,
+                                'handler' => $handler,
+                                'msg' => 'msg_id error'
+                            ], Logger::ERROR);
+                            
                             return true;
                         }
                         
@@ -149,7 +160,8 @@ class QueueService
                             $consumer->acknowledge($message);
                             // 消息体不是数组，直接进入 6,最终消费失败
                             $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
-                            $this->logError($e->getMessage(), ['queue_name' => $queueName, 'message' => $body, 'trace' => $e->getTraceAsString()]);
+                            // error 级别发送到预警
+                            $this->logError($e->getMessage(), ['queue_name' => $queueName, 'message' => $body, 'message_id' => $msg_id, 'trace' => $e->getTraceAsString()], Logger::ERROR);
                             $this->sendErrorLog([
                                 'headers' => $headers,
                                 'properties' => $properties,
@@ -189,6 +201,8 @@ class QueueService
                             $thisObj->redis->del($redisKey);
                             // consume fail 6,最终消费失败
                             $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
+                            // error 级别发送到预警
+                            $this->logError('重试最终消费失败', ['queue_name' => $queueName, 'message' => $body, 'message_id' => $msg_id], Logger::ERROR);
                             return true;
                         }
                         
@@ -234,7 +248,8 @@ class QueueService
                         $consumer->acknowledge($message);
                         // consume fail 6,最终消费失败
                         $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
-                        $this->logError($e->getMessage(), ['queue_name' => $queueName, 'message' => $body, 'trace' => $e->getTraceAsString()]);
+                        // error 级别发送到预警
+                        $this->logError($e->getMessage(), ['queue_name' => $queueName, 'message' => $body, 'trace' => $e->getTraceAsString()], Logger::ERROR);
                         $this->sendErrorLog([
                             'queue_name' => $queueName,
                             'message' => $body,
@@ -352,12 +367,12 @@ class QueueService
             
             Http::timeout(5)->post($url, $data);
         } catch (\Throwable $e) {
-            Oalog::log('通信故障或超时 - ' . $fromFunction, ['msg' => $e->getMessage(), 'url' => $url, 'params' => $params, 'error_msg' => $errorMsg]);
+            Oalog::log('通信故障或超时 - ' . $fromFunction, ['msg' => $e->getMessage(), 'url' => $url, 'params' => $params, 'error_msg' => $errorMsg], Logger::ERROR);
         }
     }
     
-    private function logError($errorMsg, $data)
+    private function logError($errorMsg, $data, $level = Logger::INFO)
     {
-        Oalog::log($errorMsg, $data);
+        Oalog::log($errorMsg, $data, $level);
     }
 }
