@@ -161,7 +161,7 @@ class QueueService
                             // 消息体不是数组，直接进入 6,最终消费失败
                             $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                             // error 级别发送到预警
-                            $this->logError($e->getMessage(), ['queue_name' => $queueName, 'message' => $body, 'message_id' => $msg_id, 'trace' => $e->getTraceAsString()], Logger::ERROR);
+                            $this->logError($e->getMessage() . " | message_id : {$msg_id}", ['queue_name' => $queueName, 'message' => $body, 'message_id' => $msg_id, 'trace' => $e->getTraceAsString()], Logger::ERROR);
                             $this->sendErrorLog([
                                 'headers' => $headers,
                                 'properties' => $properties,
@@ -202,7 +202,7 @@ class QueueService
                             // consume fail 6,最终消费失败
                             $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                             // error 级别发送到预警
-                            $this->logError('重试最终消费失败', ['queue_name' => $queueName, 'message' => $body, 'message_id' => $msg_id], Logger::ERROR);
+                            $this->logError('重试最终消费失败' . " | message_id : {$msg_id}", ['queue_name' => $queueName, 'message' => $body, 'message_id' => $msg_id], Logger::INFO);
                             return true;
                         }
                         
@@ -234,7 +234,11 @@ class QueueService
                         $thisObj->redis->set($redisKey, $consume_x_max_retry);
                         $consumer->reject($message, true);
                         $thisObj->consumeLog($queueName, $msg_id, $body, 5, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
-                        $this->logError($e->getMessage(), ['queue_name' => $queueName, 'message' => $body, 'trace' => $e->getTraceAsString()]);
+                        if ($consume_x_max_retry == 1) {
+                            $this->logError('消费异常 | errormsg : ' . $e->getMessage() . " | message_id : {$msg_id}", ['queue_name' => $queueName, 'message' => $body, 'message_id' => $msg_id , 'trace' => $e->getTraceAsString()], Logger::ERROR);
+                        } else {
+                            $this->logError('消费异常 | errormsg : ' . $e->getMessage() . " | message_id : {$msg_id}", ['queue_name' => $queueName, 'message' => $body, 'message_id' => $msg_id , 'trace' => $e->getTraceAsString()]);
+                        }
                         if ($consume_x_max_retry == 1) {
                             $this->sendErrorLog([
                                 'queue_name' => $queueName,
@@ -249,7 +253,7 @@ class QueueService
                         // consume fail 6,最终消费失败
                         $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                         // error 级别发送到预警
-                        $this->logError($e->getMessage(), ['queue_name' => $queueName, 'message' => $body, 'trace' => $e->getTraceAsString()], Logger::ERROR);
+                        $this->logError($e->getMessage() . " | message_id: {$msg_id}", ['queue_name' => $queueName, 'message' => $body, 'trace' => $e->getTraceAsString()], Logger::ERROR);
                         $this->sendErrorLog([
                             'queue_name' => $queueName,
                             'message' => $body,
