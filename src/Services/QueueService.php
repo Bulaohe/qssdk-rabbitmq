@@ -13,6 +13,9 @@ class QueueService
 {
     //生产队列消息接口地址
     const PRODUCE_API_URI = '/queue/produce';
+
+    //生产队列重试消息接口地址
+    const PRODUCE_RE_API_URI = '/queue/reProduce';
     
     //记录消息日志接口地址
     const LOG_API_URI = '/queue/log';
@@ -26,6 +29,14 @@ class QueueService
     protected $logErrorApi;
     protected $redis;
     public $produceError = '';
+    protected $daleySecs = [
+        1 => 30000,
+        2 => 600000,
+        3 => 1800000,
+        4 => 3600000,
+        5 => 7200000,
+        6 => 21600000,
+    ];
     
     /**
      * 
@@ -99,6 +110,66 @@ class QueueService
         return '';
     }
     
+    /**
+     * call remote produce api
+     * 
+     * @param string $queueName
+     * @param array $message
+     * @param string $handleClass
+     * @param string $handleMethod
+     * @param int $maxTry
+     * @param int $delay milliseconds 毫秒
+     * @return string message_id 失败返回空字符串
+     */
+    public function reProduce(string $message_id, string $queueName, array $message, string $handleClass = '', string $handleMethod = '', int $maxTry = 5, int $delay  = 0): string
+    {
+        $url = $this->queueApi . self::PRODUCE_RE_API_URI;
+        $params = [
+            'queue_name' => $queueName,
+            'message' => $message,
+            'message_id' => $message_id,
+            'delay' => $delay,
+            'max_retry_times' => $maxTry,
+            'handler_class' => $handleClass,
+            'handler_method' => $handleMethod,
+        ];
+        
+        $params = array_merge($params, $this->getPublicRequestParams());
+        
+        //生产允许重试一次
+        try {
+            $response = Http::timeout($this->config['timeout'])->post($url, $params);
+        } catch (\Exception $e) {
+            $this->produceError = $e->getMessage();
+            try {
+                $response = Http::timeout($this->config['timeout'])->post($url, $params);
+            } catch (\Exception $e) {
+                $this->produceError = $e->getMessage();
+                $this->sendErrorLog($params, $e->getMessage(), 'produce');
+                Oalog::log('消息总线通信故障或超时 - prodce', ['msg' => $e->getMessage(), 'url' => $url, 'params' => $params, 'error_trace' => $e->getTraceAsString()], Logger::ERROR);
+                return '';
+            }
+        } catch (\Error $e) {
+            $this->produceError = $e->getMessage();
+            Oalog::log('消息总线通信故障或超时 - prodce', ['msg' => $e->getMessage(), 'url' => $url, 'params' => $params, 'error_trace' => $e->getTraceAsString()], Logger::ERROR);
+            return '';
+        }
+        
+        if ($response->isOk()) {
+            $arr = $response->json();
+            if ($arr['code'] == 0) {
+                return $arr['data']['message_id'] ?? '';
+            } else {
+                $this->produceError = $arr['msg'];
+                Oalog::log($arr['msg'], ['msg' => '消息总线队列生产服务', 'url' => $url, 'params' => $params]);
+                return '';
+            }
+        }
+        
+        Oalog::log('消息总线通信故障或超时 - prodce', ['msg' => '队列生产服务不健康', 'url' => $url, 'params' => $params], Logger::ERROR);
+        return '';
+    }
+
     /**
      * 订阅消费
      * @param array $queues 队列列表 \Interop\Amqp\Impl\AmqpQueue
@@ -232,21 +303,21 @@ class QueueService
                         // consume 5,消费失败重试
                         $consume_x_max_retry += 1;
                         $thisObj->redis->set($redisKey, $consume_x_max_retry);
-                        $consumer->reject($message, true);
+                        $consumer->acknowledge($message, true);
                         $thisObj->consumeLog($queueName, $msg_id, $body, 5, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
+                        $delay = $this->daleySecs[$consume_x_max_retry] ?? 60000;//如果存在配置取配置
+                        $thisObj->reProduce($msg_id, $queueName, $body, "", "", $x_max_retry, $delay);
                         if ($consume_x_max_retry == 1) {
                             $this->logError('消费异常 | errormsg : ' . $e->getMessage() . " | message_id : {$msg_id}", ['queue_name' => $queueName, 'message' => $body, 'message_id' => $msg_id , 'trace' => $e->getTraceAsString()], Logger::ERROR);
                         } else {
                             $this->logError('消费异常 | errormsg : ' . $e->getMessage() . " | message_id : {$msg_id}", ['queue_name' => $queueName, 'message' => $body, 'message_id' => $msg_id , 'trace' => $e->getTraceAsString()]);
                         }
-                        if ($consume_x_max_retry == 1) {
-                            $this->sendErrorLog([
-                                'queue_name' => $queueName,
-                                'message' => $body,
-                                'handler' => $handler,
-                                'msg' => 'consume exception error',
-                            ], $e->getMessage(), 'consume');
-                        }
+                        $this->sendErrorLog([
+                            'queue_name' => $queueName,
+                            'message' => $body,
+                            'handler' => $handler,
+                            'msg' => 'consume exception error',
+                        ], $e->getMessage(), 'consume');
                         
                     } catch (\Error $e) {
                         $consumer->acknowledge($message);
