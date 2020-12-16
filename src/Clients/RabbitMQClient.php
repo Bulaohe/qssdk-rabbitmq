@@ -41,6 +41,7 @@ class RabbitMQClient
     {
         $fooTopic = $this->context->createTopic($topic);
         $fooTopic->setType(AmqpTopic::TYPE_TOPIC);
+        $fooTopic->addFlag(AmqpTopic::FLAG_DURABLE);
         $this->context->declareTopic($fooTopic);
         
         return $fooTopic;
@@ -50,6 +51,7 @@ class RabbitMQClient
     {
         $fooTopic = $this->context->createTopic($topic);
         $fooTopic->setType(AmqpTopic::TYPE_DIRECT);
+        $fooTopic->addFlag(AmqpTopic::FLAG_DURABLE);
         $this->context->declareTopic($fooTopic);
         
         return $fooTopic;
