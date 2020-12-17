@@ -324,7 +324,12 @@ class QueueService
                         // consume fail 6,最终消费失败
                         $thisObj->consumeLog($queueName, $msg_id, $body, 6, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                         // error 级别发送到预警
-                        $this->logError($e->getMessage() . " | message_id: {$msg_id}", ['queue_name' => $queueName, 'message' => $body, 'trace' => $e->getTraceAsString()], Logger::ERROR);
+                        $code = $e->getCode();
+                        if ($code >= 1000000 && $code < 2000000) {
+                            $this->logError($e->getMessage() . " | message_id: {$msg_id}", ['queue_name' => $queueName, 'message' => $body, 'trace' => $e->getTraceAsString()], Logger::INFO);
+                        } else {
+                            $this->logError($e->getMessage() . " | message_id: {$msg_id}", ['queue_name' => $queueName, 'message' => $body, 'trace' => $e->getTraceAsString()], Logger::ERROR);
+                        }
                         $this->sendErrorLog([
                             'queue_name' => $queueName,
                             'message' => $body,
