@@ -75,6 +75,13 @@ class RabbitMQClient
         
         return $fooQueue;
     }
+
+    public function getQueueLenth(string $queueName)
+    {
+        $fooQueue = $this->context->createQueue($queueName);
+        $fooQueue->addFlag(AmqpQueue::FLAG_PASSIVE);
+        return $this->context->declareQueue($fooQueue);
+    }
     
     public function deleteQueue(string $queueName)
     {
