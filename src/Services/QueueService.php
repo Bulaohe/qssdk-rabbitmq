@@ -186,6 +186,15 @@ class QueueService
             foreach ($queues as $queue) {
                 $tmpConsumer = $context->createConsumer($queue);
                 $subscriptionConsumer->subscribe($tmpConsumer, function (Message $message, Consumer $consumer) use ($handler, $thisObj, $queue) {
+                    // get valid reis obj again
+                    try {
+                        if (isset($handler['redis_class']) && isset($handler['redis_method'])) {
+                            $this->redis = (new $handler['redis_class'])->$handler['redis_method']($this->redis);
+                        }
+                    } catch (\Throwable $e) {
+                        // do nothing
+                    }
+                    
                     // process message
                     try {
                         try {
@@ -303,7 +312,7 @@ class QueueService
                         // consume 5,消费失败重试
                         $consume_x_max_retry += 1;
                         $thisObj->redis->set($redisKey, $consume_x_max_retry);
-                        $consumer->acknowledge($message, true);
+                        $consumer->acknowledge($message);
                         $thisObj->consumeLog($queueName, $msg_id, $body, 5, $consume_x_max_retry, $delay, $x_max_retry, $handle_class, $handle_method);
                         $delay = $this->daleySecs[$consume_x_max_retry] ?? 60000;//如果存在配置取配置
                         $thisObj->reProduce($msg_id, $queueName, $body, "", "", $x_max_retry, $delay);
