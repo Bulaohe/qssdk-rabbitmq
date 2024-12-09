@@ -6,10 +6,10 @@
     "license" : "MIT",
     "require": {
         "php": "^8.0",
+        "illuminate/collections": "^11.34",
+        "qssdk/log": "^2.1",
         "enqueue/amqp-bunny": "^0.10.19",
-        "guzzlehttp/guzzle": "^7.8",
-        "tightenco/collect": "^9.52",
-        "qssdk/log": "^2.0"
+        "guzzlehttp/guzzle": "^7.9"
     },
     "authors" : [{
             "name" : "Simon Quan",
